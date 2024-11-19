@@ -8,17 +8,17 @@
 /************** 
  * Define Constants 
  **************/ 
-#define WIFISSID "IoT" // WIFI SSID aquí  
-#define PASSWORD "1t3s0IoT23" // WIFI pwd  
+#define WIFISSID "IoT"          // Nombre de la red WiFi
+#define PASSWORD "1t3s0IoT23"   // Contraseña de la red WiFi
 #define TOKEN "token" // Ubidots TOKEN  
 #define MQTT_CLIENT_NAME "proyecto-iot" // ID único para el cliente MQTT  
 #define VARIABLE_LABEL_temp "temperatura" // Variable Temperatura 
-#define VARIABLE_LABEL_hum "humedad" // Variable Humedad 
+#define VARIABLE_LABEL_hum "humedad"      // Variable Humedad 
 #define VARIABLE_LABEL_dist_in "distancia_entrada" // Distancia sensor entrada
 #define VARIABLE_LABEL_dist_out "distancia_salida" // Distancia sensor salida
-#define VARIABLE_LABEL_ldr "luz" // Variable Luz 
-#define VARIABLE_LABEL_count "contador" // Variable Contador
-#define DEVICE_LABEL "proyecto-iotO2024" // Nombre del dispositivo en Ubidots
+#define VARIABLE_LABEL_ldr "luz"          // Variable Luz 
+#define VARIABLE_LABEL_count "contador"   // Variable Contador
+#define DEVICE_LABEL "esp32-iot"          // Nombre del dispositivo en Ubidots
 
 #define pin1 15 // Pin del sensor DHT11
 DHT dht1(pin1, DHT11); // Sensor de temperatura y humedad 
@@ -87,24 +87,30 @@ int getLDRValue() {
 }
 
 /************** 
- * Main Functions 
+ * Configuración WiFi 
  **************/ 
-void setup() { 
-  Serial.begin(115200); 
-  WiFi.begin(WIFISSID, PASSWORD); 
+void connectToWiFi() {
+  WiFi.mode(WIFI_STA); // Configura el WiFi en modo estación
+  WiFi.begin(WIFISSID, PASSWORD);
 
-  Serial.println(); 
-  Serial.print("Wait for WiFi..."); 
-
+  Serial.println("\nConectando al WiFi...");
   while (WiFi.status() != WL_CONNECTED) { 
     Serial.print("."); 
     delay(500); 
   } 
 
-  Serial.println(""); 
-  Serial.println("WiFi Connected"); 
-  Serial.println("IP address: "); 
-  Serial.println(WiFi.localIP()); 
+  Serial.println("\nWiFi conectado.");
+  Serial.print("Dirección IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+/************** 
+ * Main Functions 
+ **************/ 
+void setup() { 
+  Serial.begin(115200); 
+  connectToWiFi();
+
   client.setServer(mqttBroker, 1883); 
   client.setCallback(callback);   
 
@@ -122,7 +128,7 @@ void loop() {
     reconnect(); 
   } 
 
-  Serial.println("A continuación los datos de los sensores:");
+  Serial.println("Leyendo datos de sensores...");
 
   // Publicar distancia en ambos sensores ultrasónicos
   float distance1 = getDistance(TRIG_PIN_1, ECHO_PIN_1);
@@ -131,55 +137,43 @@ void loop() {
   Serial.print("Distancia sensor salida: "); Serial.println(distance2);
 
   // Lógica para el contador de flujo
-  if (distance1 < 100) { // Detecta objeto en entrada
+  if (distance1 < 100) { 
     counter++;
     Serial.println("Entrada detectada, incrementando contador.");
   } 
-  if (distance2 < 100) { // Detecta objeto en salida
+  if (distance2 < 100) { 
     counter--;
     Serial.println("Salida detectada, decrementando contador.");
   }
 
-  // Control de la bandera de sensores
-  if (counter <= 0) {
-    counter = 0; // Evita que el contador sea negativo
-    if (sensorsActive) {
-      sensorsActive = false; // Apaga los sensores
-      Serial.println("Contador llegó a 0. Sensores apagados.");
-    }
-  } else if (!sensorsActive) {
-    sensorsActive = true; // Enciende los sensores
-    Serial.println("Contador mayor a 0. Sensores encendidos.");
-  }
+  // Evita que el contador sea negativo
+  counter = max(counter, 0);
 
-  // Solo realizar lectura y publicación de sensores si están activos
+  // Publicar datos a Ubidots
   if (sensorsActive) {
-    // Publicar temperatura y humedad
     float t1 = dht1.readTemperature();
     float h1 = dht1.readHumidity();
+    int ldrValue = getLDRValue();
+
     Serial.print("Temperatura: "); Serial.println(t1);
     Serial.print("Humedad: "); Serial.println(h1);
+    Serial.print("Luz detectada: "); Serial.println(ldrValue);
 
+    // Publica temperatura y humedad
     sprintf(topic, "%s%s", "/v1.6/devices/", DEVICE_LABEL); 
     sprintf(payload, "{\"%s\": {\"value\": %.2f}, \"%s\": {\"value\": %.2f}}", VARIABLE_LABEL_temp, t1, VARIABLE_LABEL_hum, h1);
     client.publish(topic, payload);
 
-    // Publicar luz
-    int ldrValue = getLDRValue();
-    Serial.print("Luz detectada: "); Serial.println(ldrValue);
-
-    sprintf(topic, "%s%s", "/v1.6/devices/", DEVICE_LABEL); 
+    // Publica luz
     sprintf(payload, "{\"%s\": {\"value\": %d}}", VARIABLE_LABEL_ldr, ldrValue);
     client.publish(topic, payload);
   }
 
   // Publicar el contador
-  sprintf(topic, "%s%s", "/v1.6/devices/", DEVICE_LABEL); 
   sprintf(payload, "{\"%s\": {\"value\": %d}}", VARIABLE_LABEL_count, counter);
   client.publish(topic, payload);
 
   client.loop();
-  
-  Serial.println("Esperando 12 segundos...");
-  delay(12000); 
+
+  delay(12000); // Espera 12 segundos antes de la próxima lectura
 }
